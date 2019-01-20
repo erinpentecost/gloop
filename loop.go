@@ -17,12 +17,12 @@ type LoopFn func(ctx context.Context, step time.Duration) error
 // Loop is a game loop.
 type Loop struct {
 	// Render will attempt be called at RenderRate, and no
-	// earlier. It will run 0 or 1 times per game loop.
+	// earlier. It will run 0 or 1 times per game loop on an
+	// elastic step.
 	Render LoopFn
-	// Simulate will attempt be called at SimulationRate.
-	// It will be invoked many times at a fixed step
-	// if we are falling behind. It will run 0 or more
-	// times per game loop.
+	// Simulate will attempt be called at SimulationRate with
+	// a fixed step. It may be executed more often than Render per
+	// game loop.
 	Simulate LoopFn
 	// RenderRate controls how often Render will be called.
 	// This is the time delay between calls.
@@ -31,6 +31,8 @@ type Loop struct {
 	// This is the time delay between calls.
 	SimulationRate time.Duration
 	// ReportRate controls how often profiling stats will be published on the heartbeat channel.
+	// You can use this to figure out how much time your Simulate and Render functions are
+	// using, and what their actual call rates are.
 	// This is the time delay between calls.
 	ReportRate time.Duration
 }
@@ -50,7 +52,7 @@ func NewLoop(Render, Simulate LoopFn, RenderRate, SimulationRate, ReportRate tim
 // To stop the loop, close(ctx.Done).
 // To get periodic stats on the loop, pull from the first returned channel.
 // If either Render or Simulate throw an error, the error will be made available
-// on the output error channel and the goroutine will stop.
+// on the output error channel and the loop will stop.
 func (l *Loop) Start(ctx context.Context) (<-chan LoopStats, <-chan error) {
 	// Error capture.
 	errc := make(chan error, 1)
@@ -106,7 +108,11 @@ func (l *Loop) Start(ctx context.Context) (<-chan LoopStats, <-chan error) {
 					// Run the simulation with a fixed step.
 					simStats.MarkStart()
 					if er := l.Simulate(ctx, l.SimulationRate); er != nil {
-						sendError(er)
+						wrapped := wrapSimulateError(er, "Error returned by Simulate(ctx, %s).", l.SimulationRate.String())
+						wrapped.Misc["loopCount"] = loopCount
+						wrapped.Misc["curTime"] = curTime
+						wrapped.Misc["ctx"] = ctx
+						sendError(wrapped)
 						break
 					}
 					simStats.MarkEnd()
@@ -119,7 +125,11 @@ func (l *Loop) Start(ctx context.Context) (<-chan LoopStats, <-chan error) {
 					leftOver := rendAccumulator % l.RenderRate
 					rendStats.MarkStart()
 					if er := l.Render(ctx, rendAccumulator-leftOver); er != nil {
-						sendError(er)
+						wrapped := wrapRenderError(er, "Error returned by Render(ctx, %s).", time.Duration(rendAccumulator-leftOver).String())
+						wrapped.Misc["loopCount"] = loopCount
+						wrapped.Misc["curTime"] = curTime
+						wrapped.Misc["ctx"] = ctx
+						sendError(wrapped)
 						break
 					}
 					rendStats.MarkEnd()
