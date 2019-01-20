@@ -27,49 +27,82 @@ type Loop struct {
 	RenderRate time.Duration
 }
 
-// Start initiates a game loop.
-func (l *Loop) Start(ctx context.Context) {
-	previousTime := time.Now()
-	simAccumulator := time.Nanosecond * 0
-	rendAccumulator := time.Nanosecond * 0
-
-	// tick goes off often enough that both l.SimulationRate and l.RenderRate will be invoked
-	// when the expect to, and no earlier.
-	tick := time.Tick(time.Duration(gcd(l.SimulationRate.Nanoseconds(), l.RenderRate.Nanoseconds())))
-
-	for {
+// Start initiates a game loop. This call does not block.
+// To stop the loop, close(ctx.Done).
+// The returned channel will be pulsed whenever a Simulate() or Render() is going to be called.
+// The content of that channel includes profiling statistics on those functions.
+func (l *Loop) Start(ctx context.Context) <-chan LoopStats {
+	// Stats heartbeat channel set up
+	statHeartbeat := make(chan LoopStats, 1)
+	defer close(statHeartbeat)
+	simStats := newStatProfile(10)
+	rendStats := newStatProfile(10)
+	loopCount := uint64(0)
+	sendPulse := func() {
 		select {
-		case <-ctx.Done():
-			return
-		case <-tick:
-			// Find delta since last frame
-			curTime := time.Now()
-			frameTime := curTime.Sub(previousTime)
-			previousTime = curTime
-			simAccumulator += frameTime
-			rendAccumulator += frameTime
-
-			// Handle simulation function.
-			// This may be invoked many times.
-			for simAccumulator >= l.SimulationRate {
-				// Run the simulation with a fixed step.
-				l.Simulate(ctx, l.SimulationRate)
-				simAccumulator -= l.SimulationRate
-			}
-
-			// Run the render function. Only do it once, though.
-			// This lets me have an upper limit on FPS.
-			if rendAccumulator >= l.RenderRate {
-				leftOver := rendAccumulator % l.RenderRate
-				l.Render(ctx, rendAccumulator-leftOver)
-				rendAccumulator = leftOver
-			}
+		case statHeartbeat <- newLoopStats(loopCount, &rendStats, &simStats):
+		default:
 		}
 	}
+
+	// Now keep track of timing so I know when to invoke simulate or render.
+	previousTime := time.Now()
+	simAccumulator := time.Duration(0)
+	rendAccumulator := time.Duration(0)
+
+	// tick goes off often enough that both l.SimulationRate and l.RenderRate will be invoked
+	// when they expect to, and no earlier.
+	tick := time.Tick(gcd(l.SimulationRate, l.RenderRate))
+
+	go func() {
+		for {
+			select {
+			case <-ctx.Done():
+				break
+			case <-tick:
+				// Find delta since last frame
+				curTime := time.Now()
+				frameTime := curTime.Sub(previousTime)
+				previousTime = curTime
+				simAccumulator += frameTime
+				rendAccumulator += frameTime
+
+				// If I'm going to do some work, first pulse the heartbeat.
+				if (simAccumulator >= l.SimulationRate) || (rendAccumulator >= l.RenderRate) {
+					sendPulse()
+				}
+
+				// Handle simulation function.
+				// This may be invoked many times.
+				for simAccumulator >= l.SimulationRate {
+					// Run the simulation with a fixed step.
+					simStats.MarkStart()
+					l.Simulate(ctx, l.SimulationRate)
+					simStats.MarkEnd()
+					simAccumulator -= l.SimulationRate
+				}
+
+				// Run the render function. Only do it once, though.
+				// This lets me have an upper limit on FPS.
+				if rendAccumulator >= l.RenderRate {
+					leftOver := rendAccumulator % l.RenderRate
+					rendStats.MarkStart()
+					l.Render(ctx, rendAccumulator-leftOver)
+					rendStats.MarkEnd()
+					rendAccumulator = leftOver
+				}
+
+				// Report stats.
+			}
+			loopCount++
+		}
+	}()
+
+	return statHeartbeat
 }
 
 // gcd finds the greatest common denominator between a and b.
-func gcd(a, b int64) int64 {
+func gcd(a, b time.Duration) time.Duration {
 	for a != b {
 		if a > b {
 			a -= b
