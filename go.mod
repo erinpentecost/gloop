@@ -1,1 +1,1 @@
-module github.com/erinpentecost/gogameloop
+module github.com/erinpentecost/gloop

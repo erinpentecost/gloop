@@ -1,5 +1,5 @@
-// Package gogameloop implements a game loop.
-package gogameloop
+// Package gloop implements a game loop.
+package gloop
 
 import (
 	"context"

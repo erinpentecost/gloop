@@ -1,4 +1,4 @@
-package gogameloop
+package gloop
 
 // TokenSource is the creator for the token (metrics or errors).
 type TokenSource int

@@ -1,4 +1,4 @@
-package gogameloop
+package gloop
 
 import "time"
 
