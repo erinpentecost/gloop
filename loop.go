@@ -124,11 +124,6 @@ func (l *Loop) Start() error {
 	}
 	l.curState = stateRun
 
-	// Time tracking.
-	previousTime := time.Now()
-	simAccumulator := time.Duration(0)
-	rendAccumulator := time.Duration(0)
-
 	// Stats heartbeat channel set up
 	heartTick := time.NewTicker(time.Second)
 	sendBeat := func(ps LatencySample) {
@@ -138,22 +133,24 @@ func (l *Loop) Start() error {
 		}
 	}
 
-	// tick goes off often enough that both l.SimulationRate and l.RenderRate will be invoked
-	// when they expect to, and no earlier.
-	sleepDelay := gcd(l.SimulationRate, l.RenderRate) / 2
-	if sleepDelay < 50 {
-		sleepDelay = 50
-	}
-	tick := time.NewTicker(sleepDelay)
+	simTick := time.NewTicker(l.SimulationRate + time.Nanosecond)
+	rendTick := time.NewTicker(l.RenderRate + time.Nanosecond)
 
 	go func() {
-		defer tick.Stop()
+		defer simTick.Stop()
+		defer rendTick.Stop()
 		defer heartTick.Stop()
 		defer close(l.heartbeat)
 		defer l.Stop(nil)
 
+		// Time tracking.
+		simAccumulator := time.Duration(0)
+		rendAccumulator := time.Duration(0)
+		now := time.Now()
 		simLatency := newLatencyTracker()
+		previousSim := now
 		rendLatency := newLatencyTracker()
+		previousRend := now
 
 		for {
 			select {
@@ -164,17 +161,13 @@ func (l *Loop) Start() error {
 					RenderLatency:   rendLatency.Latency(),
 					SimulateLatency: simLatency.Latency(),
 				})
-			case <-tick.C:
-				// Find delta since last frame
+			case <-simTick.C:
+				// How much are we behind?
 				curTime := time.Now()
-				frameTime := curTime.Sub(previousTime)
-				previousTime = curTime
+				frameTime := curTime.Sub(previousSim)
+				previousSim = curTime
 				simAccumulator += frameTime
-				rendAccumulator += frameTime
-
-				// Handle simulation function.
-				// This may be invoked many times.
-
+				// Call simulate() if we built up enough lag.
 				for simAccumulator >= l.SimulationRate {
 					// Run the simulation with a fixed step.
 
@@ -191,9 +184,14 @@ func (l *Loop) Start() error {
 					// Keep track of leftover time.
 					simAccumulator -= l.SimulationRate
 				}
-
-				// Run the render function. Only do it once, though.
-				// This lets me have an upper limit on FPS.
+			case <-rendTick.C:
+				// How much are we behind?
+				curTime := time.Now()
+				frameTime := curTime.Sub(previousRend)
+				previousRend = curTime
+				rendAccumulator += frameTime
+				// Call render() if we built up enough lag.
+				// Unlike simulate(), we can skip calls by varying the input time delta.
 				if rendAccumulator >= l.RenderRate {
 
 					// Actually call render...
