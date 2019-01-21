@@ -114,6 +114,7 @@ func (l *Loop) Err() error {
 // If either Render or Simulate throw an error, the error will be made available
 // on the output error channel and the loop will stop.
 func (l *Loop) Start() error {
+	// TODO: I'm getting 27ms latency on both render and simulate when I want 16ms latency.
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
@@ -139,7 +140,11 @@ func (l *Loop) Start() error {
 
 	// tick goes off often enough that both l.SimulationRate and l.RenderRate will be invoked
 	// when they expect to, and no earlier.
-	tick := time.NewTicker(gcd(l.SimulationRate, l.RenderRate))
+	sleepDelay := gcd(l.SimulationRate, l.RenderRate) / 2
+	if sleepDelay < 50 {
+		sleepDelay = 50
+	}
+	tick := time.NewTicker(sleepDelay)
 
 	go func() {
 		defer tick.Stop()
