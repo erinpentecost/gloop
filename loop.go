@@ -30,30 +30,25 @@ type Loop struct {
 	// SimulationRate controls how often Simulate will be called.
 	// This is the time delay between calls.
 	SimulationRate time.Duration
-	// ReportRate controls how often profiling stats will be published on the heartbeat channel.
-	// You can use this to figure out how much time your Simulate and Render functions are
-	// using, and what their actual call rates are.
-	// This is the time delay between calls.
-	ReportRate time.Duration
 }
 
 // NewLoop creates a new game loop.
-func NewLoop(Render, Simulate LoopFn, RenderRate, SimulationRate, ReportRate time.Duration) Loop {
+func NewLoop(Render, Simulate LoopFn, RenderRate, SimulationRate time.Duration) Loop {
 	return Loop{
 		Render:         Render,
 		Simulate:       Simulate,
 		SimulationRate: SimulationRate,
 		RenderRate:     RenderRate,
-		ReportRate:     ReportRate,
 	}
 }
 
 // Start initiates a game loop. This call does not block.
 // To stop the loop, close(ctx.Done).
-// To get periodic stats on the loop, pull from the first returned channel.
+// To get notified before Simulate or Render are called, pull items from
+// the LoopMetric channel.
 // If either Render or Simulate throw an error, the error will be made available
 // on the output error channel and the loop will stop.
-func (l *Loop) Start(ctx context.Context) (<-chan LoopStats, <-chan error) {
+func (l *Loop) Start(ctx context.Context) (<-chan LoopMetric, <-chan error) {
 	// Error capture.
 	errc := make(chan error, 1)
 	sendError := func(er error) {
@@ -69,32 +64,46 @@ func (l *Loop) Start(ctx context.Context) (<-chan LoopStats, <-chan error) {
 	rendAccumulator := time.Duration(0)
 
 	// Stats heartbeat channel set up
-	statHeartbeat := make(chan LoopStats)
-	simStats := newStatProfile(10)
-	rendStats := newStatProfile(10)
+	statHeartbeat := make(chan LoopMetric, 1)
 	loopCount := uint64(0)
-	sendPulse := func() {
+	sendPulse := func(sample LoopMetric) {
 		select {
-		case statHeartbeat <- newLoopStats(loopCount, &rendStats, &simStats):
+		case statHeartbeat <- sample:
 		default:
 		}
 	}
-	heartBeatTick := time.Tick(l.ReportRate)
+
+	// Input validation.
+	if l.RenderRate <= 0 {
+		defer close(errc)
+		defer close(statHeartbeat)
+		sendError(wrapLoopError(nil, TokenLoop, "RenderRate can't be lte 0."))
+		return statHeartbeat, errc
+	}
+	if l.SimulationRate <= 0 {
+		defer close(errc)
+		defer close(statHeartbeat)
+		sendError(wrapLoopError(nil, TokenLoop, "SimulationRate can't be lte 0."))
+		return statHeartbeat, errc
+	}
 
 	// tick goes off often enough that both l.SimulationRate and l.RenderRate will be invoked
 	// when they expect to, and no earlier.
-	tick := time.Tick(gcd(l.SimulationRate, l.RenderRate))
+	tick := time.NewTicker(gcd(l.SimulationRate, l.RenderRate))
 
 	go func() {
+		defer tick.Stop()
 		defer close(statHeartbeat)
 		defer close(errc)
+
+		lastSimulate := time.Now()
+		lastRender := time.Now()
+
 		for {
 			select {
 			case <-ctx.Done():
 				break
-			case <-heartBeatTick:
-				sendPulse()
-			case <-tick:
+			case <-tick.C:
 				// Find delta since last frame
 				curTime := time.Now()
 				frameTime := curTime.Sub(previousTime)
@@ -106,33 +115,48 @@ func (l *Loop) Start(ctx context.Context) (<-chan LoopStats, <-chan error) {
 				// This may be invoked many times.
 				for simAccumulator >= l.SimulationRate {
 					// Run the simulation with a fixed step.
-					simStats.MarkStart()
+
+					// Publish metric...
+					simNow := time.Now()
+					simRate := simNow.Sub(lastSimulate)
+					lastSimulate = simNow
+					sendPulse(LoopMetric{TokenSimulate, simRate, loopCount})
+
+					// Actually call simulate...
 					if er := l.Simulate(ctx, l.SimulationRate); er != nil {
-						wrapped := wrapSimulateError(er, "Error returned by Simulate(ctx, %s).", l.SimulationRate.String())
+						wrapped := wrapLoopError(er, TokenSimulate, "Error returned by Simulate(ctx, %s).", l.SimulationRate.String())
 						wrapped.Misc["loopCount"] = loopCount
 						wrapped.Misc["curTime"] = curTime
 						wrapped.Misc["ctx"] = ctx
 						sendError(wrapped)
 						break
 					}
-					simStats.MarkEnd()
+
+					// Keep track of leftover time.
 					simAccumulator -= l.SimulationRate
 				}
 
 				// Run the render function. Only do it once, though.
 				// This lets me have an upper limit on FPS.
 				if rendAccumulator >= l.RenderRate {
+					// Publish metric...
+					rendNow := time.Now()
+					rendRate := rendNow.Sub(lastRender)
+					lastRender = rendNow
+					sendPulse(LoopMetric{TokenSimulate, rendRate, loopCount})
+
+					// Actually call render...
 					leftOver := rendAccumulator % l.RenderRate
-					rendStats.MarkStart()
 					if er := l.Render(ctx, rendAccumulator-leftOver); er != nil {
-						wrapped := wrapRenderError(er, "Error returned by Render(ctx, %s).", time.Duration(rendAccumulator-leftOver).String())
+						wrapped := wrapLoopError(er, TokenRender, "Error returned by Render(ctx, %s).", time.Duration(rendAccumulator-leftOver).String())
 						wrapped.Misc["loopCount"] = loopCount
 						wrapped.Misc["curTime"] = curTime
 						wrapped.Misc["ctx"] = ctx
 						sendError(wrapped)
 						break
 					}
-					rendStats.MarkEnd()
+
+					// Keep track of leftover time.
 					rendAccumulator = leftOver
 				}
 			}
