@@ -24,47 +24,43 @@ type LoopFn func(step time.Duration) error
 
 // Loop is a game loop.
 type Loop struct {
-	// Render will attempt be called at RenderRate, and no
-	// earlier. It will run 0 or 1 times per game loop on an
-	// elastic step.
+	// Render is an elastic-step function.
 	Render LoopFn
-	// Simulate will attempt be called at SimulationRate with
-	// a fixed step. It may be executed more often than Render per
-	// game loop.
+	// Simulate is a fixed-step function.
 	Simulate LoopFn
 	// RenderRate controls how often Render will be called.
 	// This is the time delay between calls.
-	RenderRate time.Duration
+	RenderLatency time.Duration
 	// SimulationRate controls how often Simulate will be called.
 	// This is the time delay between calls.
-	SimulationRate time.Duration
-	mu             sync.Mutex
-	done           chan interface{}
-	err            error
-	heartbeat      chan LatencySample
-	curState       state
+	SimulationLatency time.Duration
+	mu                sync.Mutex
+	done              chan interface{}
+	err               error
+	heartbeat         chan LatencySample
+	curState          state
 }
 
 // NewLoop creates a new game loop.
-func NewLoop(Render, Simulate LoopFn, RenderRate, SimulationRate time.Duration) (*Loop, error) {
+func NewLoop(Render, Simulate LoopFn, RenderLatency, SimulationLatency time.Duration) (*Loop, error) {
 	// Input validation.
-	if RenderRate <= 0 {
+	if RenderLatency <= 0 {
 		return nil, wrapLoopError(nil, TokenLoop, "RenderRate can't be lte 0")
 	}
-	if SimulationRate <= 0 {
+	if SimulationLatency <= 0 {
 		return nil, wrapLoopError(nil, TokenLoop, "SimulationRate can't be lte 0")
 	}
 
 	// Init loop.
 	return &Loop{
-		Render:         Render,
-		Simulate:       Simulate,
-		SimulationRate: SimulationRate,
-		RenderRate:     RenderRate,
-		done:           make(chan interface{}),
-		err:            nil,
-		heartbeat:      make(chan LatencySample),
-		curState:       stateInit,
+		Render:            Render,
+		Simulate:          Simulate,
+		SimulationLatency: SimulationLatency,
+		RenderLatency:     RenderLatency,
+		done:              make(chan interface{}),
+		err:               nil,
+		heartbeat:         make(chan LatencySample),
+		curState:          stateInit,
 	}, nil
 }
 
@@ -133,8 +129,12 @@ func (l *Loop) Start() error {
 		}
 	}
 
-	simTick := time.NewTicker(l.SimulationRate + time.Nanosecond)
-	rendTick := time.NewTicker(l.RenderRate + time.Nanosecond)
+	// simTick has an internal limiter, and I need to make sure the
+	// delay isn't accidentally doubled.
+	simTick := time.NewTicker(l.SimulationLatency / 2)
+	// rendTick has no internal limiter, the Ticker controls
+	// the execution rate.
+	rendTick := time.NewTicker(l.RenderLatency)
 
 	go func() {
 		defer simTick.Stop()
@@ -168,21 +168,21 @@ func (l *Loop) Start() error {
 				previousSim = curTime
 				simAccumulator += frameTime
 				// Call simulate() if we built up enough lag.
-				for simAccumulator >= l.SimulationRate {
+				for simAccumulator >= l.SimulationLatency {
 					// Run the simulation with a fixed step.
 
 					// Actually call simulate...
-					if er := l.Simulate(l.SimulationRate); er != nil {
-						wrapped := wrapLoopError(er, TokenSimulate, "Error returned by Simulate(%s)", l.SimulationRate.String())
+					if er := l.Simulate(l.SimulationLatency); er != nil {
+						wrapped := wrapLoopError(er, TokenSimulate, "Error returned by Simulate(%s)", l.SimulationLatency.String())
 						wrapped.Misc["curTime"] = curTime
 						l.Stop(wrapped)
 						break
 					}
 
-					simLatency.MarkDone(l.SimulationRate)
+					simLatency.MarkDone(l.SimulationLatency)
 
 					// Keep track of leftover time.
-					simAccumulator -= l.SimulationRate
+					simAccumulator -= l.SimulationLatency
 				}
 			case <-rendTick.C:
 				// How much are we behind?
@@ -192,22 +192,20 @@ func (l *Loop) Start() error {
 				rendAccumulator += frameTime
 				// Call render() if we built up enough lag.
 				// Unlike simulate(), we can skip calls by varying the input time delta.
-				if rendAccumulator >= l.RenderRate {
+				if rendAccumulator >= l.RenderLatency {
 
 					// Actually call render...
-					leftOver := rendAccumulator % l.RenderRate
-					work := rendAccumulator - leftOver
-					if er := l.Render(work); er != nil {
-						wrapped := wrapLoopError(er, TokenRender, "Error returned by Render(%s)", time.Duration(work).String())
+					if er := l.Render(rendAccumulator); er != nil {
+						wrapped := wrapLoopError(er, TokenRender, "Error returned by Render(%s)", rendAccumulator.String())
 						wrapped.Misc["curTime"] = curTime
 						l.Stop(wrapped)
 						break
 					}
 
-					rendLatency.MarkDone(work)
+					rendLatency.MarkDone(rendAccumulator)
 
 					// Keep track of leftover time.
-					rendAccumulator = leftOver
+					rendAccumulator = time.Duration(0)
 				}
 			}
 		}
