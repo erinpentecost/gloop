@@ -110,34 +110,34 @@ func (l *Loop) Err() error {
 // If either Render or Simulate throw an error, the error will be made available
 // on the output error channel and the loop will stop.
 func (l *Loop) Start() error {
-	// TODO: I'm getting 27ms latency on both render and simulate when I want 16ms latency.
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
 	// Silently fail on re-starts.
 	if l.curState != stateInit {
 		return wrapLoopError(nil, TokenLoop, "Loop is already running or is done")
 	}
 	l.curState = stateRun
 
-	// Stats heartbeat channel set up
-	heartTick := time.NewTicker(time.Second)
-	sendBeat := func(ps LatencySample) {
-		select {
-		case l.heartbeat <- ps:
-		default: // Throw it away if no one is listening.
-		}
-	}
-
-	// simTick has an internal limiter, and I need to make sure the
-	// delay isn't accidentally doubled.
-	simTick := time.NewTicker(l.SimulationLatency / 2)
-	// rendTick has no internal limiter, the Ticker controls
-	// the execution rate.
-	rendTick := time.NewTicker(l.RenderLatency)
-
 	go func() {
-		defer simTick.Stop()
+		// Stats heartbeat channel set up
+		heartTick := time.NewTicker(time.Second)
+		sendBeat := func(ps LatencySample) {
+			select {
+			case l.heartbeat <- ps:
+			default: // Throw it away if no one is listening.
+			}
+		}
+
+		// simTick has an internal limiter, and I need to make sure the
+		// delay isn't accidentally doubled.
+		simChan := time.NewTimer(time.Duration(0))
+		// rendTick has no internal limiter, the Ticker controls
+		// the execution rate.
+		rendTick := time.NewTicker(l.RenderLatency)
+
 		defer rendTick.Stop()
 		defer heartTick.Stop()
 		defer close(l.heartbeat)
@@ -151,6 +151,8 @@ func (l *Loop) Start() error {
 		rendLatency := newLatencyTracker()
 		previousRend := now
 
+		wg.Done()
+
 		for {
 			select {
 			case <-l.Done():
@@ -160,9 +162,8 @@ func (l *Loop) Start() error {
 					RenderLatency:   rendLatency.Latency(),
 					SimulateLatency: simLatency.Latency(),
 				})
-			case <-simTick.C:
+			case curTime := <-simChan.C:
 				// How much are we behind?
-				curTime := time.Now()
 				frameTime := curTime.Sub(previousSim)
 				previousSim = curTime
 				simAccumulator += frameTime
@@ -183,9 +184,10 @@ func (l *Loop) Start() error {
 					// Keep track of leftover time.
 					simAccumulator -= l.SimulationLatency
 				}
-			case <-rendTick.C:
+				// Set up next call to simulate()...
+				simChan = time.NewTimer(l.SimulationLatency - simAccumulator)
+			case curTime := <-rendTick.C:
 				// How much are we behind?
-				curTime := time.Now()
 				frameTime := curTime.Sub(previousRend)
 				previousRend = curTime
 
@@ -203,6 +205,8 @@ func (l *Loop) Start() error {
 			}
 		}
 	}()
+	// Don't return until timer goroutine is actually starting.
+	wg.Wait()
 	return nil
 }
 
