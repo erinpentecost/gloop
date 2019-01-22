@@ -90,11 +90,21 @@ func (l *Loop) Done() <-chan interface{} {
 func (l *Loop) Stop(err error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.curState != stateStop {
-		close(l.done)
+	switch l.curState {
+	case stateInit:
 		l.signalDone()
+		close(l.done)
 		l.err = err
 		l.curState = stateStop
+	case stateRun:
+		// If we are running, make the loop goroutine close the reporting chan.
+		// I want to guarantee that render or simulate will not be called once
+		// Done() closes.
+		close(l.done)
+		l.err = err
+		l.curState = stateStop
+	case stateStop:
+		return
 	}
 }
 
@@ -164,6 +174,8 @@ func (l *Loop) Start() error {
 
 		for {
 			select {
+			case <-l.doneSignal:
+				break
 			case <-l.done:
 				l.signalDone()
 				break
