@@ -145,7 +145,6 @@ func (l *Loop) Start() error {
 
 		// Time tracking.
 		simAccumulator := time.Duration(0)
-		rendAccumulator := time.Duration(0)
 		now := time.Now()
 		simLatency := newLatencyTracker()
 		previousSim := now
@@ -189,24 +188,18 @@ func (l *Loop) Start() error {
 				curTime := time.Now()
 				frameTime := curTime.Sub(previousRend)
 				previousRend = curTime
-				rendAccumulator += frameTime
+
 				// Call render() if we built up enough lag.
 				// Unlike simulate(), we can skip calls by varying the input time delta.
-				if rendAccumulator >= l.RenderLatency {
-
-					// Actually call render...
-					if er := l.Render(rendAccumulator); er != nil {
-						wrapped := wrapLoopError(er, TokenRender, "Error returned by Render(%s)", rendAccumulator.String())
-						wrapped.Misc["curTime"] = curTime
-						l.Stop(wrapped)
-						break
-					}
-
-					rendLatency.MarkDone(rendAccumulator)
-
-					// Keep track of leftover time.
-					rendAccumulator = time.Duration(0)
+				// Actually call render...
+				if er := l.Render(frameTime); er != nil {
+					wrapped := wrapLoopError(er, TokenRender, "Error returned by Render(%s)", frameTime.String())
+					wrapped.Misc["curTime"] = curTime
+					l.Stop(wrapped)
+					break
 				}
+
+				rendLatency.MarkDone(frameTime)
 			}
 		}
 	}()
