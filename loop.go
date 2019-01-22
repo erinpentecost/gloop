@@ -138,6 +138,7 @@ func (l *Loop) Start() error {
 		// the execution rate.
 		rendTick := time.NewTicker(l.RenderLatency)
 
+		defer simChan.Stop()
 		defer rendTick.Stop()
 		defer heartTick.Stop()
 		defer close(l.heartbeat)
@@ -185,7 +186,7 @@ func (l *Loop) Start() error {
 					simAccumulator -= l.SimulationLatency
 				}
 				// Set up next call to simulate()...
-				simChan = time.NewTimer(l.SimulationLatency - simAccumulator)
+				simChan.Reset(l.SimulationLatency - simAccumulator)
 			case curTime := <-rendTick.C:
 				// How much are we behind?
 				frameTime := curTime.Sub(previousRend)
