@@ -34,6 +34,8 @@ type Loop struct {
 	// This is the time delay between calls.
 	SimulationLatency time.Duration
 	mu                sync.Mutex
+	runOnce           sync.Once
+	doneSignal        chan interface{}
 	done              chan interface{}
 	err               error
 	heartbeat         chan LatencySample
@@ -56,6 +58,8 @@ func NewLoop(Render, Simulate LoopFn, RenderLatency, SimulationLatency time.Dura
 		Simulate:          Simulate,
 		SimulationLatency: SimulationLatency,
 		RenderLatency:     RenderLatency,
+		runOnce:           sync.Once{},
+		doneSignal:        make(chan interface{}),
 		done:              make(chan interface{}),
 		err:               nil,
 		heartbeat:         make(chan LatencySample),
@@ -78,7 +82,7 @@ func (l *Loop) Heartbeat() <-chan LatencySample {
 func (l *Loop) Done() <-chan interface{} {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.done
+	return l.doneSignal
 }
 
 // Stop halts the loop and sets Err().
@@ -88,6 +92,7 @@ func (l *Loop) Stop(err error) {
 	defer l.mu.Unlock()
 	if l.curState != stateStop {
 		close(l.done)
+		l.signalDone()
 		l.err = err
 		l.curState = stateStop
 	}
@@ -100,6 +105,10 @@ func (l *Loop) Err() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.err
+}
+
+func (l *Loop) signalDone() {
+	l.runOnce.Do(func() { close(l.doneSignal) })
 }
 
 // Start initiates a game loop. This call does not block.
@@ -155,7 +164,8 @@ func (l *Loop) Start() error {
 
 		for {
 			select {
-			case <-l.Done():
+			case <-l.done:
+				l.signalDone()
 				break
 			case <-heartTick.C:
 				sendBeat(LatencySample{
