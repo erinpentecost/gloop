@@ -210,15 +210,3 @@ func (l *Loop) Start() error {
 	wg.Wait()
 	return nil
 }
-
-// gcd finds the greatest common denominator between a and b.
-func gcd(a, b time.Duration) time.Duration {
-	for a != b {
-		if a > b {
-			a -= b
-		} else {
-			b -= a
-		}
-	}
-	return a
-}
