@@ -1,6 +1,5 @@
 # gloop
 
-
 [![Go Report Card](https://goreportcard.com/badge/github.com/erinpentecost/gloop)](https://goreportcard.com/report/github.com/erinpentecost/gloop)
 [![Travis CI](https://travis-ci.org/erinpentecost/gloop.svg?branch=master)](https://travis-ci.org/erinpentecost/gloop.svg?branch=master)
 [![GoDoc](https://godoc.org/github.com/erinpentecost/gloop?status.svg)](https://godoc.org/github.com/erinpentecost/gloop)
