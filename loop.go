@@ -184,8 +184,9 @@ func (l *Loop) Start() error {
 					RenderLatency:   rendLatency.Latency(),
 					SimulateLatency: simLatency.Latency(),
 				})
-			case curTime := <-simChan.C:
+			case <-simChan.C:
 				// How much are we behind?
+				curTime := time.Now()
 				frameTime := curTime.Sub(previousSim)
 				previousSim = curTime
 				simAccumulator += frameTime
@@ -208,8 +209,9 @@ func (l *Loop) Start() error {
 				}
 				// Set up next call to simulate()...
 				simChan.Reset(l.SimulationLatency - simAccumulator)
-			case curTime := <-rendTick.C:
+			case <-rendTick.C:
 				// How much are we behind?
+				curTime := time.Now()
 				frameTime := curTime.Sub(previousRend)
 				previousRend = curTime
 
@@ -227,7 +229,7 @@ func (l *Loop) Start() error {
 			}
 		}
 	}()
-	// Don't return until timer goroutine is actually starting.
+	// Don't return until timer loop goroutine is actually starting.
 	wg.Wait()
 	return nil
 }
