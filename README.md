@@ -28,14 +28,30 @@ simulate := func(step time.Duration) error {
 loop, err := gloop.NewLoop(render, simulate, gloop.Hz60Delay, gloop.Hz60Delay)
 // Start up the loop. This is not blocking.
 loop.Start()
+// Wait some period of time...
+<-time.NewTimer(time.Minute).C
 // At some point, call Stop.
 // It's safe to do this from inside render() or simulate().
+// The loop will also stop if render() or simulate() return an error.
 loop.Stop(nil)
 // Wait for the loop to finish.
 // Once this chan is closed, it is guaranteed that
 // neither render() nor simulate() will be called again.
 <-loop.Done()
 ```
+## Quick Tutorial
+
+`loop.Start(...)` starts the loop in a different goroutine.
+
+`loop.Stop(...)` will halt the loop. This is thread safe, and can be called from within `loop.Render(...)` or `loop.Simulate(...)`.
+
+If `loop.Render(...)` or `loop.Simulate(...)` return an error, the loop will halt and the loop's `loop.Err()` will be set to non-nil.
+
+Pull performance metrics out of the loop with `sample <- loop.Heartbeat()`.
+
+Wait for the loop to finish with `<- loop.Done()`. Once this closes, `loop.Render(...)` and `loop.Simulate(...)` will not be called again. The chan will also not close until any currently-executing calls to either of those functions finish.
+
+There is no need to use synchronization objects; only one call to `loop.Render(...)` or `loop.Simulate(...)` will run at a time.
 
 ## Install
 
