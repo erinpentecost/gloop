@@ -32,7 +32,7 @@ loop.Start()
 // It's safe to do this from inside render() or simulate().
 loop.Stop(nil)
 // Wait for the loop to finish.
-// Once this chan is closed, it is guaranteed that the
+// Once this chan is closed, it is guaranteed that
 // neither render() nor simulate() will be called again.
 <-loop.Done()
 ```
@@ -48,6 +48,6 @@ go get -u github.com/erinpentecost/gloop
 ```sh
 # You can use normal go tooling...
 go test ./...
-# Or the make file...
+# Or the makefile...
 make test
 ```
