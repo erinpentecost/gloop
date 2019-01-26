@@ -8,7 +8,7 @@ Real-ish time Go simulation loop with support for simultaneous fixed step (simul
 
 ## Example
 
-A full example using Vulkan and metrics publishing is availabe in [gloopex](https://github.com/erinpentecost/gloopex) repo.
+A full example using Vulkan and metrics publishing is availabe in [_examples/gloopex](_examples/gloopex/README.md) folder.
 
 ```go
 render := func(step time.Duration) error {
