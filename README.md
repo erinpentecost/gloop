@@ -1,4 +1,4 @@
-# gloop
+<center><img src="icon.jpg" alt="gloop" width="600"/></center>
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/erinpentecost/gloop)](https://goreportcard.com/report/github.com/erinpentecost/gloop)
 [![Travis CI](https://travis-ci.org/erinpentecost/gloop.svg?branch=master)](https://travis-ci.org/erinpentecost/gloop.svg?branch=master)
